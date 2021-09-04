@@ -1,9 +1,5 @@
 #pragma once
-#include <curl/curl.h>
-#include <thread>
 #include <mutex>
-#include <vector>
-#include <map>
 
 namespace Request
 {

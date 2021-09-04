@@ -1,5 +1,6 @@
 #include "Request.h"
 #include "RequestManager.h"
+#include <curl/curl.h>
 using namespace Request;
 static RequestManager<> request_manager;
 
