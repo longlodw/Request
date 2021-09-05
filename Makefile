@@ -10,5 +10,5 @@ O_FILES := $(wildcard ${OBJ}/*.o)
 librequest.so: ${O_FILES}
 	${CC} -shared $^ -o ${BIN}/$@
 
-%.o: ${CPP_FILES} ${H_FILES}
+%.o: ${CPP_FILES} ${H_FILES} Request.h
 	${CC} -std=c++17 -c -fpic -o ${OBJ}/$@ ${CPP_FILES}

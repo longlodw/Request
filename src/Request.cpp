@@ -1,4 +1,4 @@
-#include "Request.h"
+#include "../Request.h"
 #include "RequestManager.h"
 #include <curl/curl.h>
 using namespace Request;
