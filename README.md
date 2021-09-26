@@ -4,10 +4,10 @@ To use, include the `src/Request.h` file and link with `bin/librequest.so` and `
 char* url = "https://google.com";
 char** headers = nullptr;
 size_t headers_num = 0;
-Request::RequestResult result;
-Request::addRequest(result, url, headers, headers_num, Request::RequestType::GET);
-Request::startAllRequests();
+char* res = nullptr;
+Request::RequestHandler hd;
+Request::addRequest(hd, url, reinterpret_cast<Request::void_ptr&>(res), false, headers);
+Request::startAllRequests(100);
 //other code
-char* response = result.getData();
-size_t response_length = result.getSize();
+size_t response_length = result.join();
 ```

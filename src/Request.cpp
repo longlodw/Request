@@ -1,148 +1,251 @@
 #include "../Request.h"
 #include "RequestManager.h"
 #include <curl/curl.h>
-using namespace Request;
-static RequestManager<> request_manager;
+#include <mutex>
+using curl_ptr = CURL *;
 
-char* RequestResult::getData()
+static Request::RequestManager<> request_manager;
+
+size_t Request::RequestHandler::join()
 {
-    mut.lock();
-    char *re = data;
-    data = nullptr;
-    mut.unlock();
-    return re;
+    if (response)
+    {
+        auto started = startAllRequests(0);
+        reinterpret_cast<std::mutex *>(mut)->lock();
+        if (data)
+        {
+            delete data;
+            data = nullptr;
+        }
+        response = nullptr;
+        reinterpret_cast<std::mutex *>(mut)->unlock();
+        delete reinterpret_cast<std::mutex *>(mut);
+        if (started)
+        {
+            stopAllRequests();
+        }
+    }
+    return response_size;
 }
 
-RequestResult::~RequestResult()
+Request::RequestHandler::~RequestHandler()
 {
-    if (!data)
-    {
-        delete[] data;
-    }
-    mut.try_lock();
-    mut.unlock();
+    join();
 }
 
 size_t callBack(char *ptr, size_t size, size_t n_memb, void *userdata)
 {
     size_t real_size = size * n_memb;
-    auto &dat = reinterpret_cast<RequestResult *>(userdata)->data;
-    dat = reinterpret_cast<char *>(std::realloc(dat, reinterpret_cast<RequestResult *>(userdata)->data_size + real_size));
+    auto &true_userdata = *reinterpret_cast<Request::RequestHandler *>(userdata);
+    auto &dat = *reinterpret_cast<char **>(true_userdata.response);
+    dat = reinterpret_cast<char *>(std::realloc(dat, true_userdata.response_size + real_size));
 
     if (!dat)
     {
-        return size_t(0);
+        return 0;
     }
-    auto st = dat + reinterpret_cast<RequestResult *>(userdata)->data_size;
+    auto st = dat + true_userdata.response_size;
     for (size_t k = 0; k < real_size; ++k)
     {
         st[k] = ptr[k];
     }
-    reinterpret_cast<RequestResult *>(userdata)->data_size += real_size;
+    true_userdata.response_size += real_size;
     return real_size;
 }
 
-void Request::addRequest(RequestResult& result, const char* url, const char** h, const size_t& h_num, const RequestType& rt)
+size_t callBackFile(char *ptr, size_t size, size_t n_memb, void *userdata)
 {
+    size_t real_size = size * n_memb;
+    auto &true_userdata = *reinterpret_cast<Request::RequestHandler *>(userdata);
+    auto &dat = *reinterpret_cast<FILE **>(true_userdata.response);
+    fwrite(ptr, size, n_memb, dat);
+    true_userdata.response_size += real_size;
+    return real_size;
+}
+
+char* readFile(FILE* f)
+{
+    int off_set = ftell(f);
+    fseek(f, 0, SEEK_END);
+    size_t file_size = ftell(f);
+    fseek(f, off_set, SEEK_SET);
+    size_t buf_size = file_size - off_set;
+    char *buf = new char[buf_size + 1];
+    fread(buf, sizeof(char), buf_size, f);
+    buf[buf_size] = 0;
+    return buf;
+}
+
+Request::void_ptr Request::generateHeader(const char **h, const size_t &h_num)
+{
+    curl_slist *headers = nullptr;
+    for (size_t k = 0; k < h_num; ++k)
+    {
+        headers = curl_slist_append(headers, h[k]);
+    }
+    return reinterpret_cast<void *>(headers);
+}
+
+void Request::freeHeader(void *h)
+{
+    curl_slist_free_all(reinterpret_cast<curl_slist *>(h));
+}
+
+void Request::addRequest(RequestHandler& handler, const char* url, void_ptr& output, const bool &is_file_output, const void_ptr &h, const RequestType &rt, const void_ptr &data, const bool &is_file_data)
+{
+    //init curl pointer
     CURL *curl_e;
     if (request_manager.easy_pointers.available() == 0)
     {
         request_manager.easy_pointers.add(curl_easy_init());
     }
     auto id = request_manager.easy_pointers.getNextResource(&curl_e);
+
+    //add url
     curl_easy_setopt(curl_e, CURLOPT_URL, url);
     
-    curl_easy_setopt(curl_e, CURLOPT_WRITEFUNCTION, callBack);
-    curl_easy_setopt(curl_e, CURLOPT_WRITEDATA, reinterpret_cast<void *>(&result));
-    curl_slist *headers = nullptr;
-    for (size_t k = 0; k < h_num; ++k)
+    //set up callback function
+    if (is_file_output)
     {
-        headers = curl_slist_append(headers, h[k]);
+        curl_easy_setopt(curl_e, CURLOPT_WRITEFUNCTION, callBackFile);
     }
-    if (headers)
+    else
     {
-        curl_easy_setopt(curl_e, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl_e, CURLOPT_WRITEFUNCTION, callBack);
     }
-    auto &multi_pointer = request_manager.multi_pointer;
+    curl_easy_setopt(curl_e, CURLOPT_WRITEDATA, reinterpret_cast<void_ptr>(&handler));
+    
+    //add header
+    if (h)
+    {
+        curl_easy_setopt(curl_e, CURLOPT_HTTPHEADER, reinterpret_cast<curl_slist *>(h));
+    }
+
+    //add data to send
+    if (data)
+    {
+        if (is_file_data)
+        {
+            if (rt != RequestType::POST && rt != RequestType::PUT)
+            {
+                handler.data = readFile(reinterpret_cast<FILE *>(data));
+                curl_easy_setopt(curl_e, CURLOPT_POSTFIELDS, handler.data);
+            }
+            else
+            {
+                curl_easy_setopt(curl_e, CURLOPT_READFUNCTION, nullptr);
+                curl_easy_setopt(curl_e, CURLOPT_READDATA, data);
+            }
+        }
+        else
+        {
+            curl_easy_setopt(curl_e, CURLOPT_POSTFIELDS, data);
+        }
+    }
+
+    //request type
     switch (rt)
     {
-    case RequestType::GET:
-        curl_easy_setopt(multi_pointer, CURLOPT_CUSTOMREQUEST, "GET");
-        break;
     case RequestType::POST:
-        curl_easy_setopt(multi_pointer, CURLOPT_CUSTOMREQUEST, "POST");
+        curl_easy_setopt(curl_e, CURLOPT_POST, 1L);
         break;
     case RequestType::PUT:
-        curl_easy_setopt(multi_pointer, CURLOPT_CUSTOMREQUEST, "PUT");
+        curl_easy_setopt(curl_e, CURLOPT_UPLOAD, 1L);
         break;
     case RequestType::DELETE:
-        curl_easy_setopt(multi_pointer, CURLOPT_CUSTOMREQUEST, "DELETE");
+        curl_easy_setopt(curl_e, CURLOPT_CUSTOMREQUEST, "DELETE");
         break;
-    default:
+    case RequestType::GET:
+        curl_easy_setopt(curl_e, CURLOPT_CUSTOMREQUEST, "GET");
         break;
     }
+    auto &multi_pointer = request_manager.multi_pointer;
+
+    //handler init
     curl_multi_add_handle(multi_pointer, curl_e);
-    result.mut.lock();
-    result.curl_num = id;
-    result.manager = &request_manager;
-    
+    handler.mut = new std::mutex();
+    reinterpret_cast<std::mutex *>(handler.mut)->lock();
+    handler.curl_num = id;
+    handler.response = &output;
+
     request_manager.mut_mem_var.lock();
     request_manager.fresh_add = true;
-    request_manager.curl_pointer_map[curl_e] = &result;
+    request_manager.curl_pointer_map[curl_e] = &handler;
     request_manager.mut_mem_var.unlock();
 }
 
-void Request::startAllRequests()
+bool Request::startAllRequests(const size_t& timeout)
 {
-    static auto f = []()
+    auto f = [timeout]()
     {
-        static int last;
-        request_manager.mut_main_thread.lock();
+        static size_t num_ran = 0;
         auto &running = request_manager.running;
-        auto &multi_pointer = request_manager.multi_pointer;
-        auto &fresh_add = request_manager.fresh_add;
-        auto &mut_mem_var = request_manager.mut_mem_var;
-        auto &curl_pointer_map = request_manager.curl_pointer_map;
-        auto &easy_pointers = request_manager.easy_pointers;
-        auto &mut_main_thread = request_manager.mut_main_thread;
         do
         {
-            curl_multi_perform(multi_pointer, &running);
-            if (last != running || fresh_add)
-            {
-                int in_q = 0;
-                CURLMsg *mes;
-                while (mes = curl_multi_info_read(multi_pointer, &in_q))
-                {
-                    if (mes->msg == CURLMSG_DONE)
-                    {
-                        auto e_pointer = mes->easy_handle;
-                        mut_mem_var.lock();
-                        auto re = curl_pointer_map[e_pointer];
-                        easy_pointers.returnResource(re->curl_num);
-                        mut_mem_var.unlock();
-                        curl_multi_remove_handle(multi_pointer, e_pointer);
-                        re->mut.unlock();
-                    }
-                }
-            }
-            mut_mem_var.lock();
-            last = running;
-            fresh_add = false;
-            mut_mem_var.unlock();
+            downloadIfPossible(timeout);
         } while (running);
-        mut_main_thread.unlock();
+        request_manager.mut_main_thread.unlock();
     };
     if (request_manager.main_thread)
     {
         if (request_manager.mut_main_thread.try_lock())
         {
+            request_manager.main_thread->join();
+            request_manager.mut_main_thread.lock();
             *request_manager.main_thread = std::thread(f);
             request_manager.mut_main_thread.unlock();
+            return true;
         }
     }
     else
     {
+        request_manager.mut_main_thread.lock();
         request_manager.main_thread = new std::thread(f);
+        return true;
     }
+    return false;
+}
+
+void Request::downloadIfPossible(const size_t& timeout)
+{
+    static int last = 0;
+    auto &multi_pointer = request_manager.multi_pointer;
+    auto &mut_mem_var = request_manager.mut_mem_var;
+    auto &curl_pointer_map = request_manager.curl_pointer_map;
+    auto &easy_pointers = request_manager.easy_pointers;
+    auto &running = request_manager.running;
+    auto &fresh_add = request_manager.fresh_add;
+    int num_fd;
+    mut_mem_var.lock();
+    curl_multi_wait(multi_pointer, nullptr, 0, timeout, &num_fd);
+    curl_multi_perform(multi_pointer, &running);
+    if (last != running || fresh_add)
+    {
+        int in_q = 0;
+        CURLMsg *mes;
+        while (mes = curl_multi_info_read(multi_pointer, &in_q))
+        {
+            if (mes->msg == CURLMSG_DONE)
+            {
+                auto e_pointer = mes->easy_handle;
+                auto hand = curl_pointer_map[e_pointer];
+                easy_pointers.returnResource(hand->curl_num);
+                curl_multi_remove_handle(multi_pointer, e_pointer);
+                reinterpret_cast<std::mutex*>(hand->mut)->unlock();
+            }
+        }
+    }
+    last = running;
+    fresh_add = false;
+    mut_mem_var.unlock();
+}
+
+void Request::stopAllRequests()
+{
+    request_manager.mut_mem_var.lock();
+    auto temp = request_manager.running;
+    request_manager.running = 0;
+    request_manager.mut_mem_var.unlock();
+    request_manager.main_thread->join();
+    request_manager.running = temp;
 }

@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <curl/curl.h>
+#include <iostream>
 namespace Request
 {
     class RequestResult;
@@ -68,7 +69,7 @@ namespace Request
     template <size_t N = 0>
     struct RequestManager
     {
-        std::map<CURL *, RequestResult *> curl_pointer_map;
+        std::map<CURL *, RequestHandler *> curl_pointer_map;
         std::thread *main_thread;
         std::mutex mut_main_thread;
         std::mutex mut_mem_var;
@@ -89,7 +90,7 @@ namespace Request
 
         ~RequestManager()
         {
-            if(main_thread)
+            if (main_thread)
             {
                 main_thread->join();
             }
