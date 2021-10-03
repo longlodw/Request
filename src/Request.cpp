@@ -15,6 +15,21 @@ Request::RequestHandler::RequestHandler(RequestHandler&& other)
     other.data = nullptr;
 }
 
+Request::RequestHandler &Request::RequestHandler::operator=(RequestHandler &&other)
+{
+    join();
+    mut = other.mut;
+    response = other.response;
+    response_size = other.response_size;
+    data = other.data;
+
+    other.mut = nullptr;
+    other.response = nullptr;
+    other.response_size = 0;
+    other.data = nullptr;
+    return *this;
+}
+
 size_t Request::RequestHandler::join()
 {
     if (response)

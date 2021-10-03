@@ -22,6 +22,8 @@ namespace Request
         RequestHandler() = default;
         RequestHandler(const RequestHandler &other) = delete;
         RequestHandler(RequestHandler &&other);
+        RequestHandler &operator=(const RequestHandler &other) = delete;
+        RequestHandler &operator=(RequestHandler &&other);
         size_t join();
         bool done();
         ~RequestHandler();
