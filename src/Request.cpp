@@ -6,6 +6,15 @@ using curl_ptr = CURL *;
 
 static Request::RequestManager<> request_manager;
 
+Request::RequestHandler::RequestHandler(RequestHandler&& other)
+: mut(other.mut), curl_num(other.curl_num), response(other.response), response_size(other.response_size), data(other.data)
+{
+    other.mut = nullptr;
+    other.response = nullptr;
+    other.response_size = 0;
+    other.data = nullptr;
+}
+
 size_t Request::RequestHandler::join()
 {
     if (response)
@@ -26,6 +35,16 @@ size_t Request::RequestHandler::join()
         }
     }
     return response_size;
+}
+
+bool Request::RequestHandler::done()
+{
+    if (reinterpret_cast<std::mutex *>(mut)->try_lock())
+    {
+        reinterpret_cast<std::mutex *>(mut)->unlock();
+        return true;
+    }
+    return false;
 }
 
 Request::RequestHandler::~RequestHandler()

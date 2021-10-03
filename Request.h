@@ -14,12 +14,16 @@ namespace Request
 
     struct RequestHandler
     {
-        void_ptr mut;
+        void_ptr mut = nullptr;
         size_t curl_num;
         void_ptr response = nullptr;
         size_t response_size = 0;
         char *data = nullptr;
+        RequestHandler() = default;
+        RequestHandler(const RequestHandler &other) = delete;
+        RequestHandler(RequestHandler &&other);
         size_t join();
+        bool done();
         ~RequestHandler();
     };
 
