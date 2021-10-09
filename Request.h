@@ -35,4 +35,6 @@ namespace Request
     void_ptr generateHeader(const char **h, const size_t &h_num);
     void freeHeader(void *h);
     void stopAllRequests();
+    char *urlEncode(const char *const &str, const size_t &len);
+    void freeEncode(char *const &str);
 }

@@ -283,3 +283,20 @@ void Request::stopAllRequests()
     request_manager.main_thread->join();
     request_manager.running = temp;
 }
+
+char *Request::urlEncode(const char *const &str, const size_t &len)
+{
+    CURL *curl = curl_easy_init();
+    char *result = nullptr;
+    if (curl)
+    {
+        result = curl_easy_escape(curl, str, len);
+    }
+    curl_easy_cleanup(curl);
+    return result;
+}
+
+void Request::freeEncode(char *const &str)
+{
+    curl_free(str);
+}
